@@ -1,0 +1,211 @@
+(function() {
+    if (window.gameLoopId) cancelAnimationFrame(window.gameLoopId);
+    if (window.gameIntervalId) clearInterval(window.gameIntervalId);
+    
+    const cleanup = () => {
+        window.removeEventListener('keydown', window._gameKeyHandler);
+        window.removeEventListener('mousedown', window._gameClickHandler);
+        window.removeEventListener('mousemove', window._gameMoveHandler);
+    };
+    cleanup();
+
+    let gameState = "MENU", menuSelection = 0; 
+    let gameActive = false, camOpen = false, power = 100, hour = 12, tick = 0;
+    let monsterL = 5, monsterR = 7, monsterF = 4, monsterB = 10; 
+    let doorL = false, doorR = false, lightL = false, lightR = false;
+    let killTimerL = 5, killTimerR = 5, killTimerF = 4, killTimerB = 3;
+    let currentCam = "STAGE"; 
+    const cams = ["STAGE", "COVE", "L_HALL", "R_HALL"];
+    const camNames = { "STAGE": "CAM 1A", "COVE": "CAM 1C", "L_HALL": "CAM 2A", "R_HALL": "CAM 4B" };
+
+    const C_BROWN = "\x1b[38;2;139;69;19m", C_FOXY = "\x1b[38;2;200;0;0m";
+    const C_BLUE = "\x1b[38;2;0;100;255m", C_GOLD = "\x1b[38;2;255;215;0m";
+    const C_RED = "\x1b[31m", RESET = "\x1b[0m", C_WHITE = "\x1b[97m";
+    const C_GREEN = "\x1b[32m", C_CYAN = "\x1b[36m", C_GRAY = "\x1b[90m", C_BLACK = "\x1b[30m";
+
+    let cameraAngle = 0, mouseY = 0.5, needsUpdate = true;
+    const resX = 110, resY = 20, fov = Math.PI * 0.95;
+    let powerOutTimer = 12; // Time until Freddy gets you
+
+    const SPRITES = {
+        BONNIE: [` /\\_/\\ `, `( o.o )`, ` > ^ < `],
+        CHICA:  [`  (o)  `, ` <( )> `, `  / \\  `],
+        FREDDY: [`  ___  `, ` (o o) `, ` ( = ) `],
+        FOXY:   [` ^---^ `, ` (x o) `, `  \\_/  `]
+    };
+
+    window._gameMoveHandler = (e) => { 
+        if (gameState === "PLAYING") { 
+            cameraAngle = (e.clientX / window.innerWidth - 0.5) * 3.5; 
+            mouseY = e.clientY / window.innerHeight;
+            triggerUpdate(); 
+        }
+    };
+
+    window._gameClickHandler = () => {
+        if (!gameActive || power <= 0) return; 
+        if (camOpen) {
+            currentCam = cams[(cams.indexOf(currentCam) + 1) % cams.length];
+        } else {
+            if (cameraAngle < -1.1) {
+                if (mouseY < 0.5) doorL = !doorL;
+                else lightL = !lightL;
+            } else if (cameraAngle > 1.1) {
+                if (mouseY < 0.5) doorR = !doorR; 
+                else lightR = !lightR;
+            }
+        }
+        triggerUpdate();
+    };
+
+    window._gameKeyHandler = (e) => {
+        const k = e.key.toLowerCase();
+        if (gameState === "MENU") {
+            if (k === 'w' || k === 's') menuSelection = menuSelection === 0 ? 1 : 0;
+            if (k === 'enter') { gameState = "PLAYING"; gameActive = true; }
+        }
+        if (gameState === "PLAYING" && k === 'r' && power > 0) camOpen = !camOpen;
+        triggerUpdate();
+    };
+
+    function triggerUpdate() { needsUpdate = true; }
+    window.addEventListener('mousemove', window._gameMoveHandler);
+    window.addEventListener('mousedown', window._gameClickHandler);
+    window.addEventListener('keydown', window._gameKeyHandler);
+
+    function getMap() {
+        const at = (c) => {
+            let s = "";
+            if (c === "STAGE") { if(monsterB>=8) s+=C_BROWN+"P"; if(monsterL>=4) s+=C_BLUE+"B"; if(monsterR>=6) s+=C_GOLD+"C"; }
+            if (c === "COVE" && monsterF > 0) s += C_FOXY+"F";
+            if (c === "L_HALL" && monsterL < 4 && monsterL > 0) s += C_BLUE+"B";
+            if (c === "R_HALL") { if(monsterR < 6 && monsterR > 0) s += C_GOLD+"C"; if(monsterB < 8 && monsterB > 0) s += C_BROWN+"P"; }
+            return (s+RESET).padEnd(10, " ");
+        };
+        const m = (id) => currentCam === id ? C_GREEN + "■" + RESET : "□";
+        return [ `MAP:`, `STG ${m("STAGE")} ${at("STAGE")}`, `COV ${m("COVE")} ${at("COVE")}`, `L2A ${m("L_HALL")} ${at("L_HALL")}`, `R4B ${m("R_HALL")} ${at("R_HALL")}` ];
+    }
+
+    function renderCam() {
+        if (power <= 0) return "\n".repeat(10) + " ".repeat(45) + "[ CAMERA SYSTEM OFFLINE ]";
+        let screen = Array(15).fill(0).map(() => Array(100).fill(" "));
+        const scanline = tick % 15;
+        for(let y=0; y<15; y++) {
+            for(let x=0; x<100; x++) {
+                if (y === scanline) screen[y][x] = "\x1b[30m-\x1b[0m";
+                else if (Math.random() > 0.995) screen[y][x] = "░";
+                if (currentCam === "COVE") {
+                    if (x > 20 && x < 80 && y > 1 && y < 13) screen[y][x] = (x % 8 === 0) ? "*" : (y % 2 === 0 ? ":" : "|");
+                } else if (currentCam === "STAGE") {
+                    if (y === 2 && x > 40 && x < 60) screen[y][x] = "CELEBRATE!"[x-41] || " ";
+                    if (y < 3 && x % 20 === 0) screen[y][x] = "*";
+                } else { if (y > 11) screen[y][x] = (x+y)%2===0 ? "■" : "_"; }
+            }
+        }
+        let monstersHere = [];
+        if (currentCam === "STAGE") {
+            if (monsterB >= 8) monstersHere.push({s: SPRITES.FREDDY, c: C_BROWN});
+            if (monsterL >= 4) monstersHere.push({s: SPRITES.BONNIE, c: C_BLUE});
+            if (monsterR >= 6) monstersHere.push({s: SPRITES.CHICA,  c: C_GOLD});
+        } else if (currentCam === "COVE" && monsterF > 0) monstersHere.push({s: SPRITES.FOXY, c: C_FOXY});
+        else if (currentCam === "L_HALL" && monsterL < 4 && monsterL > 0) monstersHere.push({s: SPRITES.BONNIE, c: C_BLUE});
+        else if (currentCam === "R_HALL") {
+            if (monsterR < 6 && monsterR > 0) monstersHere.push({s: SPRITES.CHICA, c: C_GOLD});
+            if (monsterB < 8 && monsterB > 0) monstersHere.push({s: SPRITES.FREDDY, c: C_BROWN});
+        }
+        monstersHere.forEach((m, i) => {
+            m.s.forEach((row, dy) => {
+                for(let dx=0; dx<row.length; dx++) { if (6+dy < 15) screen[6+dy][25 + (i*15) + dx] = m.c + row[dx] + RESET; }
+            });
+        });
+        const map = getMap();
+        map.forEach((line, y) => {
+            let clean = line.replace(/\x1b\[.*?m/g, '');
+            for(let x=0; x<clean.length; x++) screen[y+1][75+x] = line; 
+        });
+        const rec = (tick % 2 === 0) ? `${C_RED}● REC${RESET}` : `  REC`;
+        let out = ` ${rec} | ${camNames[currentCam]} | ${hour} AM\n` + "═".repeat(100) + "\n";
+        out += screen.map(r => r.join("")).join("\n");
+        return out + `\n` + "═".repeat(100) + `\n POWER: ${power.toFixed(0)}%`;
+    }
+
+    function renderOffice() {
+        let isPowerOut = power <= 0;
+        let out = isPowerOut ? "\n" : `[ ${hour} AM ] | [ POWER: ${Math.max(0, power).toFixed(1)}% ]\n`;
+        
+        // Forced Darkness Palette if power is out
+        const WALL_COL = isPowerOut ? C_BLACK : C_GRAY;
+        const LIGHT_COL = isPowerOut ? C_BLACK : C_CYAN;
+        const BTN_COL = isPowerOut ? C_BLACK : C_RED;
+
+        for (let y = 0; y < resY; y++) {
+            let line = " |";
+            for (let x = 0; x < resX; x++) {
+                let rayAngle = (cameraAngle - fov / 2) + (x / resX) * fov;
+                let char = " ", color = RESET;
+                
+                if (rayAngle < -1.3 || rayAngle > 1.3) {
+                    const isL = rayAngle < 0;
+                    color = (y < resY/2) ? ((isL?doorL:doorR) && !isPowerOut ? C_RED : WALL_COL) : ((isL?lightL:lightR) && !isPowerOut ? C_CYAN : WALL_COL);
+                    char = "■";
+                } 
+                else if (rayAngle < -0.8 || rayAngle > 0.8) {
+                    const isL = rayAngle < 0;
+                    if ((isL && doorL && !isPowerOut) || (!isL && doorR && !isPowerOut)) { color = WALL_COL; char = "█"; }
+                    else {
+                        color = (isL?lightL:lightR) && !isPowerOut ? C_CYAN : C_BLACK;
+                        let monster = isL ? (monsterL===0 || monsterF===0) : (monsterR===0 || monsterB===0);
+                        let mCol = isL ? (monsterF===0 ? C_FOXY : C_BLUE) : (monsterB===0 ? C_BROWN : C_GOLD);
+                        
+                        // Freddy's glowing eyes during power out
+                        if (isPowerOut && isL && powerOutTimer < 8 && tick % 2 === 0) {
+                            char = (x % 2 === 0) ? C_CYAN + "o" : " ";
+                        } else {
+                            char = ((isL?lightL:lightR) && monster && !isPowerOut) ? (mCol+"█"+C_CYAN) : (isPowerOut ? " " : "░");
+                        }
+                    }
+                }
+                line += color + char + RESET;
+            }
+            out += line + "|\n";
+        }
+        return out;
+    }
+
+    window.gameIntervalId = setInterval(() => {
+        if (!gameActive) return;
+        tick++;
+        if (power > 0) {
+            if (tick % 15 === 0) { if (monsterL > 0) monsterL--; if (monsterR > 0) monsterR--; }
+            if (tick % 25 === 0 && !camOpen) monsterB--; 
+            if (tick % 10 === 0) monsterF--;
+            if (monsterL === 0 && !doorL && --killTimerL <= 0) endGame("BONNIE");
+            if (monsterR === 0 && !doorR && --killTimerR <= 0) endGame("CHICA");
+            if (monsterB === 0 && !doorR && --killTimerB <= 0) endGame("FREDDY");
+            if (monsterF === 0 && !doorL && --killTimerF <= 0) endGame("FOXY");
+            if (doorL && monsterL === 0) { monsterL = 5; killTimerL = 5; }
+            if (doorR && monsterR === 0) { monsterR = 7; killTimerR = 5; }
+            if (doorL && monsterF === 0) { monsterF = 4; killTimerF = 4; }
+            if (doorR && monsterB === 0) { monsterB = 10; killTimerB = 3; }
+            power -= (0.1 + (doorL?1.2:0) + (doorR?1.2:0) + (lightL?0.5:0) + (lightR?0.5:0) + (camOpen?0.8:0));
+            if (tick % 60 === 0) { hour = hour === 12 ? 1 : hour + 1; if (hour === 6) endGame("WIN"); }
+        } else {
+            camOpen = false; doorL = false; doorR = false; lightL = false; lightR = false;
+            powerOutTimer--;
+            if (powerOutTimer <= 0) endGame("FREDDY (POWER OUT)");
+        }
+        triggerUpdate();
+    }, 1000);
+
+    function loop() { 
+        if (needsUpdate) { 
+            console.clear();
+            if (gameState === "MENU") console.log("\n\n   FNAF TERMINAL\n\n   " + (menuSelection===0?"> [ NEW GAME ]":"  NEW GAME") + "\n   " + (menuSelection===1?"> [ CONTINUE ]":"  CONTINUE"));
+            else console.log(camOpen ? renderCam() : renderOffice());
+            needsUpdate = false; 
+        } 
+        window.gameLoopId = requestAnimationFrame(loop); 
+    }
+    function endGame(r) { gameActive = false; console.clear(); console.log(`\n\n !!! ${r} !!! \n\n Restarting...`); setTimeout(() => location.reload(), 3000); }
+    loop();
+})();
